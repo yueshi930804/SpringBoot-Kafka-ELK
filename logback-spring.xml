@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <property resource="application.properties"/>
+
+    <contextName>${spring.application.name}</contextName>
+
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+    <!-- Kafka日志输出模式 -->
+    <property name="KAFKA_LOG_PATTERN"
+              value="${HOSTNAME} %d{yyyy-MM-dd HH:mm:ss.SSS} -%5p ${PID:-} [%15.15t] %-40.40logger{39} : %m%n"/>
+    <!-- Kafka服务，集群请“,”以分割（host1:port1,host2:port2） -->
+    <property name="KAFKA_BOOTSTRAP_SERVERS" value="${kafka.bootstrap.servers}"/>
+    <!-- 日志文件 -->
+    <property name="LOG_FILE" value="${LOG_PATH}/${CONTEXT_NAME}.log"/>
+
+    <!-- 文件输出 -->
+    <appender name="FILE"
+              class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <encoder>
+            <pattern>${FILE_LOG_PATTERN}</pattern>
+        </encoder>
+        <file>${LOG_FILE}</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_FILE}.%d{yyyy-MM-dd}.%i
+            </fileNamePattern>
+            <!-- 日志文件最多保存30天数 -->
+            <maxHistory>30</maxHistory>
+            <timeBasedFileNamingAndTriggeringPolicy
+                    class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
+                <!-- 单个日志文集超过100MB时将被分割 -->
+                <maxFileSize>100MB</maxFileSize>
+            </timeBasedFileNamingAndTriggeringPolicy>
+        </rollingPolicy>
+    </appender>
+
+    <!-- Kafka输出（这是高效但不能保证日志全部输出到Kafka的方案，相比应用程序的阻塞，少量日志的丢失是可以接受的） -->
+    <appender name="KAFKA" class="com.github.danielwegener.logback.kafka.KafkaAppender">
+        <encoder class="com.github.danielwegener.logback.kafka.encoding.PatternLayoutKafkaMessageEncoder">
+            <layout class="ch.qos.logback.classic.PatternLayout">
+                <pattern>${KAFKA_LOG_PATTERN}</pattern>
+            </layout>
+        </encoder>
+        <!-- 主题 -->
+        <topic>logstash-${CONTEXT_NAME}1</topic>
+        <!-- 日志消息按HostName分区，保证有序性 -->
+        <keyingStrategy class="com.github.danielwegener.logback.kafka.keying.HostNameKeyingStrategy"/>
+        <!-- 使用异步传输。应用程序线程不会被阻塞 -->
+        <deliveryStrategy class="com.github.danielwegener.logback.kafka.delivery.AsynchronousDeliveryStrategy"/>
+        <producerConfig>bootstrap.servers=${KAFKA_BOOTSTRAP_SERVERS}</producerConfig>
+        <!-- 不等待broker确认接收  -->
+        <producerConfig>acks=0</producerConfig>
+        <!-- 等待1000毫秒并收集日志消息，然后将其批量发送 -->
+        <producerConfig>linger.ms=1000</producerConfig>
+        <!-- 即使生产者缓冲区（默认大小32MB，可通过buffer.memory属性修改）已满，也不要阻止应用程序，而是开始丢弃消息 -->
+        <producerConfig>block.on.buffer.full=false</producerConfig>
+        <!-- 定义一个标识来标记你的客户端 -->
+        <producerConfig>client.id=${CONTEXT_NAME}@${HOSTNAME}</producerConfig>
+        <!-- 没有后备<appender-ref> -->
+    </appender>
+
+    <!-- 异步输出（文件输出采用异步处理，以提升应用程序的处理效率） -->
+    <appender name="ASYNC" class="ch.qos.logback.classic.AsyncAppender">
+        <!-- 不丢失日志.默认的,如果队列的80%已满,则会丢弃TRACT、DEBUG、INFO级别的日志 -->
+        <discardingThreshold>0</discardingThreshold>
+        <!-- 更改默认的队列的深度,该值会影响性能.默认值为256 -->
+        <queueSize>8192</queueSize>
+        <!-- 添加附加的appender,最多只能添加一个 -->
+        <appender-ref ref="FILE"/>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="ASYNC"/>
+        <appender-ref ref="KAFKA"/>
+    </root>
+
+    <!-- 输出sql日志信息，需配置mybatis.configuration.log-prefix=mybatis -->
+    <logger name="mybatis" level="DEBUG"/>
+</configuration>
